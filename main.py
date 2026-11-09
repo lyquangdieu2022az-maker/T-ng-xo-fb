@@ -337,3 +337,41 @@ async def on_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     elif data == "set_reason":
                 await q.edit_message_text("📝 Chọn lý do:", reply_markup=kb_reason(), parse_mode="HTML")
+        # ================== ENTRYPOINT ==================
+def main():
+    if not BOT_TOKEN:
+        logger.error("❌ Thiếu BOT_TOKEN")
+        return
+    if not ADMIN_ID:
+        logger.error("❌ Thiếu ADMIN_ID")
+        return
+
+    tg_app = Application.builder().token(BOT_TOKEN).build()
+
+    tg_app.add_handler(CommandHandler("start", cmd_start))
+    tg_app.add_handler(CommandHandler("settarget", cmd_settarget))
+    tg_app.add_handler(CommandHandler("setreason", cmd_setreason))
+    tg_app.add_handler(CommandHandler("setdelay", cmd_setdelay))
+    tg_app.add_handler(CommandHandler("setcookie", cmd_setcookie))
+    tg_app.add_handler(CommandHandler("status", cmd_status))
+    tg_app.add_handler(CallbackQueryHandler(on_button))
+    tg_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
+
+    # Chạy bot polling trong thread riêng
+    def run_bot():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        tg_app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+    threading.Thread(target=run_bot, daemon=True).start()
+
+    # chờ bot init xong rồi mới start worker
+    time.sleep(3)
+    threading.Thread(target=lambda: loop_worker(tg_app), daemon=True).start()
+
+    # Flask giữ process sống (Render web service)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+
+if __name__ == "__main__":
+    main()

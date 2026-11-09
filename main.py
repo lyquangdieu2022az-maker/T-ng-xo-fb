@@ -288,6 +288,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ Bạn không phải ADMIN.")
         return
+    WAITING["kind"] = None # Reset trạng thái chờ nhập liệu
     await update.message.reply_text(
         "🤖 <b>FB AUTO REPORT BOT</b>\nQuản lý qua nút bên dưới hoặc lệnh:\n"
         "<code>/settarget &lt;id&gt;</code>\n<code>/setreason &lt;1-6&gt;</code>\n"
@@ -297,8 +298,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 async def cmd_settarget(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not _is_admin(update.effective_user.id):
-        return
+    if not _is_admin(update.effective_user.id): return
     if not ctx.args:
         await update.message.reply_text("Cú pháp: /settarget <id>")
         return
@@ -308,8 +308,7 @@ async def cmd_settarget(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"🎯 Target: <code>{cfg['target_id']}</code>", parse_mode="HTML")
 
 async def cmd_setreason(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not _is_admin(update.effective_user.id):
-        return
+    if not _is_admin(update.effective_user.id): return
     if not ctx.args or not ctx.args[0].isdigit() or int(ctx.args[0]) not in REASONS:
         await update.message.reply_text("Cú pháp: /setreason <1-6>")
         return
@@ -319,8 +318,7 @@ async def cmd_setreason(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"📝 Reason: {REASONS[int(ctx.args[0])]}")
 
 async def cmd_setdelay(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not _is_admin(update.effective_user.id):
-        return
+    if not _is_admin(update.effective_user.id): return
     if not ctx.args or not ctx.args[0].isdigit():
         await update.message.reply_text("Cú pháp: /setdelay <giây>")
         return
@@ -330,8 +328,7 @@ async def cmd_setdelay(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"⏱️ Delay: {ctx.args[0]}s")
 
 async def cmd_setcookie(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not _is_admin(update.effective_user.id):
-        return
+    if not _is_admin(update.effective_user.id): return
     cookie = " ".join(ctx.args).strip()
     if not cookie:
         await update.message.reply_text("Cú pháp: /setcookie <cookie>")
@@ -342,17 +339,14 @@ async def cmd_setcookie(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🍪 Đã cập nhật cookie.")
 
 async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not _is_admin(update.effective_user.id):
-        return
+    if not _is_admin(update.effective_user.id): return
     await update.message.reply_text(format_status(load_config()), parse_mode="HTML")
 
-# ---- Handler text đầu vào (fix lỗi NameError) ----
 async def on_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not _is_admin(update.effective_user.id):
-        return
+    if not _is_admin(update.effective_user.id): return
     kind = WAITING.get("kind")
-    if not kind:
-        return
+    if not kind: return
+    
     text = update.message.text.strip()
     cfg = load_config()
 
@@ -360,11 +354,7 @@ async def on_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         cfg["target_id"] = parse_target(text)
         save_config(cfg)
         WAITING["kind"] = None
-        await update.message.reply_text(
-            f"✅ Đã đặt target:\n<code>{cfg['target_id']}</code>",
-            reply_markup=kb_main(),
-            parse_mode="HTML",
-        )
+        await update.message.reply_text(f"✅ Đã đặt target:\n<code>{cfg['target_id']}</code>", reply_markup=kb_main(), parse_mode="HTML")
 
     elif kind == "delay":
         if not text.isdigit():
@@ -373,9 +363,7 @@ async def on_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         cfg["delay"] = int(text)
         save_config(cfg)
         WAITING["kind"] = None
-        await update.message.reply_text(
-            f"✅ Delay: {text}s", reply_markup=kb_main(), parse_mode="HTML"
-        )
+        await update.message.reply_text(f"✅ Delay: {text}s", reply_markup=kb_main(), parse_mode="HTML")
 
     elif kind == "cookie":
         cfg["cookie"] = text
@@ -395,22 +383,93 @@ async def on_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if data == "start_loop":
         if not cfg.get("target_id"):
-            await q.edit_message_text(" 🇻🇳 ")
-    # ================== KHỞI CHẠY BOT ==================
+            await q.edit_message_text("❌ Chưa đặt target! Hãy đổi target trước.", reply_markup=kb_main())
+            return
+        cfg["active"] = True
+        save_config(cfg)
+        await q.edit_message_text(format_status(cfg), reply_markup=kb_main(), parse_mode="HTML")
+
+    elif data == "stop_loop":
+        cfg["active"] = False
+        save_config(cfg)
+        await q.edit_message_text(format_status(cfg), reply_markup=kb_main(), parse_mode="HTML")
+
+    elif data == "toggle_loop":
+        cfg["loop"] = not cfg.get("loop", False)
+        save_config(cfg)
+        await q.edit_message_text(format_status(cfg), reply_markup=kb_main(), parse_mode="HTML")
+
+    elif data == "set_target":
+        WAITING["kind"] = "target"
+        await q.edit_message_text("🎯 Gửi UID hoặc link Facebook (hoặc gõ /start để hủy):", reply_markup=kb_main())
+
+    elif data == "set_delay":
+        WAITING["kind"] = "delay"
+        await q.edit_message_text("⏱ Gửi số giây delay (hoặc gõ /start để hủy):", reply_markup=kb_main())
+
+    elif data == "input_cookie":
+        WAITING["kind"] = "cookie"
+        await q.edit_message_text("🍪 Gửi chuỗi cookie (hoặc gõ /start để hủy):", reply_markup=kb_main())
+
+    elif data == "set_reason":
+        await q.edit_message_text("📝 Chọn lý do report:", reply_markup=kb_reason())
+
+    elif data.startswith("reason_"):
+        reason_num = int(data.split("_")[1])
+        cfg["reason"] = reason_num
+        save_config(cfg)
+        await q.edit_message_text(format_status(cfg), reply_markup=kb_main(), parse_mode="HTML")
+
+    elif data == "back":
+        await q.edit_message_text(format_status(cfg), reply_markup=kb_main(), parse_mode="HTML")
+
+    elif data == "show_cookie":
+        cookie = cfg.get("cookie", "Chưa có")
+        display_cookie = cookie[:150] + "..." if len(cookie) > 150 else cookie
+        await q.edit_message_text(f"🍪 <b>Cookie hiện tại:</b>\n<code>{display_cookie}</code>", reply_markup=kb_main(), parse_mode="HTML")
+
+    elif data == "new_cookie":
+        cfg["cookie"] = gen_cookie_from_uid(FB_UID)
+        save_config(cfg)
+        await q.edit_message_text("✅ Đã tạo cookie mới.\n\n" + format_status(cfg), reply_markup=kb_main(), parse_mode="HTML")
+
+    elif data == "load_proxy":
+        await q.edit_message_text("⏳ Đang tải proxy, vui lòng đợi...", reply_markup=kb_main())
+        await asyncio.to_thread(load_proxies)
+        await q.edit_message_text("✅ Đã tải xong proxy.\n\n" + format_status(load_config()), reply_markup=kb_main(), parse_mode="HTML")
+
+    elif data == "status":
+        await q.edit_message_text(format_status(cfg), reply_markup=kb_main(), parse_mode="HTML")
+
+# ================== KHỞI CHẠY BOT ==================
+async def _post_init(app_tg: Application):
+    # Hàm này chạy ngay sau khi bot khởi động event loop
+    # Dùng để kích hoạt luồng report ngầm
+    threading.Thread(target=loop_worker, args=(app_tg,), daemon=True).start()
+    logger.info("=== ĐÃ BẬT LUỒNG REPORT NGẦM ===")
+
 def _run_bot():
+    import asyncio
+    asyncio.set_event_loop(asyncio.new_event_loop())
+    
     try:
         logger.info("=== ĐANG KHỞI ĐỘNG BOT TELEGRAM ===")
         if not BOT_TOKEN:
             logger.error("LỖI: BOT_TOKEN trống! Kiểm tra lại Environment trên Render.")
             return
 
-        bot_app = Application.builder().token(BOT_TOKEN).build()
+        bot_app = Application.builder().token(BOT_TOKEN).post_init(_post_init).build()
         
-        # --- THÊM HANDLERS CỦA MÀY VÀO ĐÂY ---
-        # Ví dụ:
-        # bot_app.add_handler(CommandHandler("start", start_command))
-        # bot_app.add_handler(CallbackQueryHandler(button_handler))
-        # bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+        # Gắn Handlers
+        bot_app.add_handler(CommandHandler("start", cmd_start))
+        bot_app.add_handler(CommandHandler("settarget", cmd_settarget))
+        bot_app.add_handler(CommandHandler("setreason", cmd_setreason))
+        bot_app.add_handler(CommandHandler("setdelay", cmd_setdelay))
+        bot_app.add_handler(CommandHandler("setcookie", cmd_setcookie))
+        bot_app.add_handler(CommandHandler("status", cmd_status))
+        
+        bot_app.add_handler(CallbackQueryHandler(on_button))
+        bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
         
         logger.info("=== BOT ĐANG CHẠY (POLLING) ===")
         bot_app.run_polling(drop_pending_updates=True)
@@ -421,11 +480,10 @@ def _run_bot():
         traceback.print_exc()
 
 if __name__ == "__main__":
-    # Chạy bot trong một luồng riêng (background)
-    import threading
+    # Chạy bot trong luồng riêng
     threading.Thread(target=_run_bot, daemon=True).start()
     
-    # Chạy Flask ở luồng chính để giữ Render không bị ngủ/kill
+    # Chạy Flask ở luồng chính để giữ Render
     port = int(os.environ.get("PORT", 10000))
     logger.info(f"=== FLASK ĐANG LẮNG NGHE CỔNG {port} ===")
     app.run(host="0.0.0.0", port=port)

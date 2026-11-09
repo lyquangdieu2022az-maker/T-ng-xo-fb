@@ -1,6 +1,6 @@
-import os, json, time, random, string, asyncio, threading, hashlib, base64, logging
+import os, json, time, random, string, asyncio, threading, logging, re
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -76,7 +76,6 @@ def proxy_dict(px):
 
 # ================== COOKIE HELPER ==================
 def gen_cookie_from_uid(uid: str) -> str:
-    """Tự tạo cookie giả lập từ UID (fallback khi thiếu cookie)."""
     c_user = uid or "10000" + "".join(random.choices(string.digits, k=10))
     xs = "".join(random.choices(string.ascii_letters + string.digits + "%:", k=80))
     datr = "".join(random.choices(string.ascii_letters + string.digits + "_-", k=24))
@@ -90,7 +89,6 @@ def get_cookie() -> str:
     cfg = load_config()
     if cfg.get("cookie"):
         return cfg["cookie"]
-    # tạo cookie mới từ UID
     new_cookie = gen_cookie_from_uid(FB_UID)
     cfg["cookie"] = new_cookie
     save_config(cfg)
@@ -178,7 +176,16 @@ def report_once(target_id: str, reason: int = 1) -> dict:
     except Exception as e:
         return {"ok": False, "status": 0, "proxy": px, "error": str(e)}
 
-# ================== BOT LOGIC ==================
+# ================== TARGET PARSER ==================
+def parse_target(text: str) -> str:
+    text = text.strip()
+    if "facebook.com" in text:
+        m = re.search(r"facebook\.com/(?:profile\.php\?id=|)([0-9A-Za-z._-]+)", text)
+        if m:
+            return m.group(1).split("?")[0]
+    return text.split("?")[0].rstrip("/")
+
+# ================== KEYBOARDS ==================
 def kb_main():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("▶️ BẮT ĐẦU", callback_data="start_loop"),
@@ -189,13 +196,12 @@ def kb_main():
          InlineKeyboardButton("🔄 Tạo cookie mới", callback_data="new_cookie")],
         [InlineKeyboardButton("🌐 Nạp proxy", callback_data="load_proxy"),
          InlineKeyboardButton("📊 Trạng thái", callback_data="status")],
-        [InlineKeyboardButton("🔁 Bật/Tắt loop", callback_data="toggle_loop")]
+        [InlineKeyboardButton("🔁 Bật/Tắt loop", callback_data="toggle_loop"),
+         InlineKeyboardButton("⏱ Đổi delay", callback_data="set_delay")]
     ])
 
 def kb_reason():
-    rows = []
-    for num, label in REASONS.items():
-        rows.append([InlineKeyboardButton(f"{num}. {label}", callback_data=f"reason_{num}")])
+    rows = [[InlineKeyboardButton(f"{num}. {label}", callback_data=f"reason_{num}")] for num, label in REASONS.items()]
     rows.append([InlineKeyboardButton("« Quay lại", callback_data="back")])
     return InlineKeyboardMarkup(rows)
 
@@ -214,21 +220,17 @@ def format_status(cfg):
         f"🔑 UID acc clone: <code>{FB_UID or 'N/A'}</code>"
     )
 
-# ---- vòng loop report (thread) ----
-LOOP_THREAD = None
+# ================== LOOP WORKER ==================
 STOP_FLAG = threading.Event()
 
 def loop_worker(app: Application):
-    global STOP_FLAG
     while not STOP_FLAG.is_set():
         cfg = load_config()
         if not cfg.get("active"):
-            time.sleep(2)
-            continue
+            time.sleep(2); continue
         target = cfg.get("target_id")
         if not target:
-            time.sleep(5)
-            continue
+            time.sleep(5); continue
         res = report_once(target, int(cfg.get("reason", 1)))
         if res["ok"]:
             cfg["total_reports"] = cfg.get("total_reports", 0) + 1
@@ -245,37 +247,35 @@ def loop_worker(app: Application):
                 save_config(cfg)
                 msg += "\n🍪 Đã tự tạo cookie mới."
         try:
-            asyncio.run_coroutine_threadsafe(app.bot.send_message(
-                ADMIN_ID, msg, parse_mode="HTML"), app.loop)
+            asyncio.run_coroutine_threadsafe(
+                app.bot.send_message(ADMIN_ID, msg, parse_mode="HTML"), app.loop)
         except Exception as e:
             logger.error(f"tele notify: {e}")
-        # sleep có thể dừng
         for _ in range(int(cfg.get("delay", 30))):
             if STOP_FLAG.is_set() or not load_config().get("active"):
                 break
             time.sleep(1)
         if not load_config().get("loop"):
-            cfg = load_config(); cfg["active"] = False; save_config(cfg)
+            c = load_config(); c["active"] = False; save_config(c)
 
-# ================== TELEGRAM HANDLERS ==================
+# ================== BOT HANDLERS ==================
+WAITING = {"kind": None}
+
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Bạn không phải ADMIN.")
-        return
-    cfg = load_config()
+        await update.message.reply_text("⛔ Bạn không phải ADMIN."); return
     await update.message.reply_text(
-        "🤖 <b>FB AUTO REPORT BOT</b>\n"
-        "Quản lý qua các nút bên dưới. Có thể nhập target/reason bằng cú pháp:\n"
-        "<code>/settarget &lt;id&gt;</code>\n<code>/setreason &lt;1-6&gt;</code>\n<code>/setdelay &lt;giây&gt;</code>",
-        reply_markup=kb_main(), parse_mode="HTML"
-    )
+        "🤖 <b>FB AUTO REPORT BOT</b>\nQuản lý qua nút bên dưới hoặc lệnh:\n"
+        "<code>/settarget &lt;id&gt;</code>\n<code>/setreason &lt;1-6&gt;</code>\n"
+        "<code>/setdelay &lt;giây&gt;</code>\n<code>/setcookie &lt;cookie&gt;</code>",
+        reply_markup=kb_main(), parse_mode="HTML")
 
 async def cmd_settarget(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     if not ctx.args:
         await update.message.reply_text("Cú pháp: /settarget <id>"); return
-    cfg = load_config(); cfg["target_id"] = ctx.args[0]; save_config(cfg)
-    await update.message.reply_text(f"🎯 Target: <code>{ctx.args[0]}</code>", parse_mode="HTML")
+    cfg = load_config(); cfg["target_id"] = parse_target(" ".join(ctx.args)); save_config(cfg)
+    await update.message.reply_text(f"🎯 Target: <code>{cfg['target_id']}</code>", parse_mode="HTML")
 
 async def cmd_setreason(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
@@ -314,9 +314,26 @@ async def on_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if data == "start_loop":
         if not cfg.get("target_id"):
             await q.edit_message_text("⚠️ Chưa có target. Dùng /settarget trước.", reply_markup=kb_main()); return
+        if not cfg.get("cookie"):
+            await q.edit_message_text("⚠️ Thiếu cookie (sẽ tự tạo fallback khi report)."); 
         cfg["active"] = True; cfg["loop"] = True; save_config(cfg)
-        await q.edit_message_text("▶️ Đã BẮT ĐẦU report loop.\n" + format_status(cfg),
-                                  reply_markup=kb_main(), parse_mode="HTML")
+        await q.edit_message_text("▶️ Đã BẮT ĐẦU report loop.\n" + format_status(cfg), reply_markup=kb_main(), parse_mode="HTML")
+
     elif data == "stop_loop":
         cfg["active"] = False; save_config(cfg)
-        await q.edit_message_text("
+        await q.edit_message_text("⏹ Đã DỪNG.\n" + format_status(cfg), reply_markup=kb_main(), parse_mode="HTML")
+
+    elif data == "toggle_loop":
+        cfg["loop"] = not cfg.get("loop"); save_config(cfg)
+        await q.edit_message_text(f"🔁 Loop: {'BẬT' if cfg['loop'] else 'TẮT'}\n" + format_status(cfg), reply_markup=kb_main(), parse_mode="HTML")
+
+    elif data == "set_target":
+        WAITING["kind"] = "target"
+        await q.edit_message_text("📥 Nhập <b>UID hoặc link profile</b> cần report:", parse_mode="HTML")
+
+    elif data == "set_delay":
+        WAITING["kind"] = "delay"
+        await q.edit_message_text("📥 Nhập <b>số giây</b> delay (≥30 khuyến nghị):", parse_mode="HTML")
+
+    elif data == "set_reason":
+        await q.edit_message_text("📝 Chọn lý do:", reply_markup=kb_reason(), parse_mode="

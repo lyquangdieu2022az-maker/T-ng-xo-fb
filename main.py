@@ -37,7 +37,7 @@ REASONS = {
     6: "Ngôn từ thù địch",
 }
 
-# ================== FLASK (giữ process sống trên Render) ==================
+# ================== FLASK (GIỮ RENDER SỐNG) ==================
 app = Flask(__name__)
 
 @app.route("/")
@@ -288,7 +288,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ Bạn không phải ADMIN.")
         return
-    WAITING["kind"] = None # Reset trạng thái chờ nhập liệu
+    WAITING["kind"] = None
     await update.message.reply_text(
         "🤖 <b>FB AUTO REPORT BOT</b>\nQuản lý qua nút bên dưới hoặc lệnh:\n"
         "<code>/settarget &lt;id&gt;</code>\n<code>/setreason &lt;1-6&gt;</code>\n"
@@ -443,8 +443,6 @@ async def on_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 # ================== KHỞI CHẠY BOT ==================
 async def _post_init(app_tg: Application):
-    # Hàm này chạy ngay sau khi bot khởi động event loop
-    # Dùng để kích hoạt luồng report ngầm
     threading.Thread(target=loop_worker, args=(app_tg,), daemon=True).start()
     logger.info("=== ĐÃ BẬT LUỒNG REPORT NGẦM ===")
 
@@ -460,7 +458,6 @@ def _run_bot():
 
         bot_app = Application.builder().token(BOT_TOKEN).post_init(_post_init).build()
         
-        # Gắn Handlers
         bot_app.add_handler(CommandHandler("start", cmd_start))
         bot_app.add_handler(CommandHandler("settarget", cmd_settarget))
         bot_app.add_handler(CommandHandler("setreason", cmd_setreason))
@@ -472,7 +469,8 @@ def _run_bot():
         bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
         
         logger.info("=== BOT ĐANG CHẠY (POLLING) ===")
-        bot_app.run_polling(drop_pending_updates=True)
+        # FIX LỖI CRASH: Thêm stop_signals=None
+        bot_app.run_polling(drop_pending_updates=True, stop_signals=None)
         
     except Exception as e:
         import traceback
@@ -480,10 +478,7 @@ def _run_bot():
         traceback.print_exc()
 
 if __name__ == "__main__":
-    # Chạy bot trong luồng riêng
     threading.Thread(target=_run_bot, daemon=True).start()
-    
-    # Chạy Flask ở luồng chính để giữ Render
     port = int(os.environ.get("PORT", 10000))
     logger.info(f"=== FLASK ĐANG LẮNG NGHE CỔNG {port} ===")
     app.run(host="0.0.0.0", port=port)

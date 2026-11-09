@@ -336,7 +336,7 @@ async def on_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text("📥 Nhập <b>số giây</b> delay (≥30 khuyến nghị):", parse_mode="HTML")
 
     elif data == "set_reason":
-                await q.edit_message_text("📝 Chọn lý do:", reply_markup=kb_reason(), parse_mode="HTML")
+                await q.edit_message_text("📝 <b>Chọn lý do:</b>", reply_markup=kb_reason(), parse_mode="HTML")
         # ================== ENTRYPOINT ==================
 def main():
     if not BOT_TOKEN:

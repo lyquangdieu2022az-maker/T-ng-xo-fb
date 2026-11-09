@@ -396,18 +396,36 @@ async def on_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if data == "start_loop":
         if not cfg.get("target_id"):
             await q.edit_message_text(" 🇻🇳 ")
-    import threading
-from flask import Flask
-
-_flask = Flask(__name__)
-
-@_flask.get("/")
-def _health():
-    return "ok", 200
-
+    # ================== KHỞI CHẠY BOT ==================
 def _run_bot():
-    app = Application.builder().token(os.environ["BOT_TOKEN"]).build()
-    app.run_polling(drop_pending_updates=True)
+    try:
+        logger.info("=== ĐANG KHỞI ĐỘNG BOT TELEGRAM ===")
+        if not BOT_TOKEN:
+            logger.error("LỖI: BOT_TOKEN trống! Kiểm tra lại Environment trên Render.")
+            return
 
-threading.Thread(target=_run_bot, daemon=True).start()
-_flask.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+        bot_app = Application.builder().token(BOT_TOKEN).build()
+        
+        # --- THÊM HANDLERS CỦA MÀY VÀO ĐÂY ---
+        # Ví dụ:
+        # bot_app.add_handler(CommandHandler("start", start_command))
+        # bot_app.add_handler(CallbackQueryHandler(button_handler))
+        # bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+        
+        logger.info("=== BOT ĐANG CHẠY (POLLING) ===")
+        bot_app.run_polling(drop_pending_updates=True)
+        
+    except Exception as e:
+        import traceback
+        logger.error(f"=== BOT CRASH: {e} ===")
+        traceback.print_exc()
+
+if __name__ == "__main__":
+    # Chạy bot trong một luồng riêng (background)
+    import threading
+    threading.Thread(target=_run_bot, daemon=True).start()
+    
+    # Chạy Flask ở luồng chính để giữ Render không bị ngủ/kill
+    port = int(os.environ.get("PORT", 10000))
+    logger.info(f"=== FLASK ĐANG LẮNG NGHE CỔNG {port} ===")
+    app.run(host="0.0.0.0", port=port)

@@ -396,23 +396,18 @@ async def on_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if data == "start_loop":
         if not cfg.get("target_id"):
             await q.edit_message_text(" 🇻🇳 ")
-    if __name__ == "__main__":
-    import threading, os
-    from flask import Flask
+    import threading
+from flask import Flask
 
-    flask_app = Flask(__name__)
+_flask = Flask(__name__)
 
-    @flask_app.get("/")
-    def _h():
-        return "ok", 200
+@_flask.get("/")
+def _health():
+    return "ok", 200
 
-    def _bot():
-        app = Application.builder().token(os.environ["BOT_TOKEN"]).build()
-        # ... handlers
-        app.run_polling(drop_pending_updates=True)
+def _run_bot():
+    app = Application.builder().token(os.environ["BOT_TOKEN"]).build()
+    app.run_polling(drop_pending_updates=True)
 
-    threading.Thread(target=_bot, daemon=True).start()
-    flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
-                
-
-    
+threading.Thread(target=_run_bot, daemon=True).start()
+_flask.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))

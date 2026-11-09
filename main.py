@@ -396,4 +396,4 @@ async def on_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if data == "start_loop":
         if not cfg.get("target_id"):
             await q.edit_message_text(
-                "⚠️
+                "⚠️"

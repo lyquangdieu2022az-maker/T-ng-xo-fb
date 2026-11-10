@@ -15,7 +15,6 @@ logger = logging.getLogger("report-bot")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 FB_UID = os.getenv("FB_UID", "")
-FB_COOKIES = os.getenv("FB_COOKIES", "")
 CONFIG_FILE = "config.json"
 
 DEFAULT_CONFIG = {
@@ -37,7 +36,7 @@ REASONS = {
     6: "Ngôn từ thù địch",
 }
 
-# ================== FLASK (GIỮ RENDER SỐNG) ==================
+# ================== FLASK (GIỮ PROCESS SỐNG) ==================
 app = Flask(__name__)
 
 @app.route("/")
@@ -49,25 +48,40 @@ PROXY_LIST = []
 PROXY_SOURCES = [
     "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
     "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
-    "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt",
 ]
+PROXY_API_URL = os.getenv("PROXY_API_URL", "")
 
 def load_proxies():
     global PROXY_LIST
     collected = set()
-    for src in PROXY_SOURCES:
+    
+    # 1. Ưu tiên lấy từ API (nếu có)
+    if PROXY_API_URL:
         try:
-            r = requests.get(src, timeout=15)
+            r = requests.get(PROXY_API_URL, timeout=10)
             if r.status_code == 200:
                 for line in r.text.splitlines():
-                    line = line.strip()
-                    if line and ":" in line and not line.startswith("#"):
-                        collected.add(line)
-            logger.info(f"Loaded {len(collected)} proxies from {src}")
+                    if ":" in line:
+                        collected.add(line.strip())
+            logger.info(f"✅ Đã lấy {len(collected)} proxy xịn từ API")
         except Exception as e:
-            logger.warning(f"Proxy source failed {src}: {e}")
+            logger.error(f"Lỗi lấy proxy API: {e}")
+            
+    # 2. Fallback lấy từ Github (nếu API không có)
+    if not collected:
+        for src in PROXY_SOURCES:
+            try:
+                r = requests.get(src, timeout=10)
+                if r.status_code == 200:
+                    for line in r.text.splitlines():
+                        line = line.strip()
+                        if line and ":" in line and not line.startswith("#"):
+                            collected.add(line)
+            except:
+                pass
+                
     PROXY_LIST = list(collected)
-    logger.info(f"✅ TỔNG PROXY: {len(PROXY_LIST)}")
+    logger.info(f"✅ TỔNG PROXY ĐANG CÓ: {len(PROXY_LIST)}")
 
 def get_proxy():
     if not PROXY_LIST:
@@ -89,22 +103,25 @@ def gen_cookie_from_uid(uid: str) -> str:
     return f"c_user={c_user}; xs={xs}; datr={datr}; sb={sb}; fr={fr};"
 
 def get_cookie() -> str:
-    if FB_COOKIES and len(FB_COOKIES) > 20:
-        return FB_COOKIES
+    env_cookies = os.getenv("FB_COOKIES", "").split("|")
+    valid_cookies = [c.strip() for c in env_cookies if len(c.strip()) > 50]
+    
+    if valid_cookies:
+        return random.choice(valid_cookies)
+        
     cfg = load_config()
     if cfg.get("cookie"):
         return cfg["cookie"]
+        
     new_cookie = gen_cookie_from_uid(FB_UID)
     cfg["cookie"] = new_cookie
     save_config(cfg)
-    logger.warning("⚠️ Thiếu cookie -> đã tự tạo cookie mới (fallback).")
     return new_cookie
 
 # ================== CONFIG IO ==================
 def load_config():
     if not os.path.exists(CONFIG_FILE):
         c = DEFAULT_CONFIG.copy()
-        c["cookie"] = FB_COOKIES or gen_cookie_from_uid(FB_UID)
         save_config(c)
         return c
     try:
@@ -212,13 +229,14 @@ def kb_reason():
     return InlineKeyboardMarkup(rows)
 
 def format_status(cfg):
+    cookie_status = "✅ Có (Xoay vòng)" if os.getenv("FB_COOKIES") else ("✅ Có (Thủ công)" if cfg.get('cookie') else "❌ Thiếu")
     return (
         f"📊 <b>TRẠNG THÁI BOT</b>\n"
         f"━━━━━━━━━━━━━━━\n"
         f"🎯 Target: <code>{cfg.get('target_id') or 'Chưa đặt'}</code>\n"
         f"📝 Reason: {REASONS.get(cfg.get('reason'), cfg.get('reason'))}\n"
         f"⏱️ Delay: {cfg.get('delay')}s\n"
-        f"🍪 Cookie: {'✅ Có' if cfg.get('cookie') else '❌ Thiếu (sẽ tự tạo)'}\n"
+        f"🍪 Cookie: {cookie_status}\n"
         f"🌐 Proxy: {len(PROXY_LIST)} con\n"
         f"🔁 Loop: {'✅ BẬT' if cfg.get('loop') else '❌ TẮT'}\n"
         f"⚙️ Hoạt động: {'🟢 ĐANG CHẠY' if cfg.get('active') else '🔴 DỪNG'}\n"
@@ -255,10 +273,6 @@ def loop_worker(app_tg: Application):
                 f"🌐 Proxy: <code>{res.get('proxy') or 'direct'}</code>\n"
                 f"⚠️ {res.get('error') or 'status ' + str(res.get('status'))}"
             )
-            if "auth" in (res.get("error") or "").lower() or res.get("status") == 400:
-                cfg["cookie"] = gen_cookie_from_uid(FB_UID)
-                save_config(cfg)
-                msg += "\n🍪 Đã tự tạo cookie mới."
 
         try:
             asyncio.run_coroutine_threadsafe(
@@ -292,7 +306,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🤖 <b>FB AUTO REPORT BOT</b>\nQuản lý qua nút bên dưới hoặc lệnh:\n"
         "<code>/settarget &lt;id&gt;</code>\n<code>/setreason &lt;1-6&gt;</code>\n"
-        "<code>/setdelay &lt;giây&gt;</code>\n<code>/setcookie &lt;cookie&gt;</code>",
+        "<code>/setdelay &lt;giây&gt;</code>",
         reply_markup=kb_main(),
         parse_mode="HTML",
     )
@@ -326,17 +340,6 @@ async def cmd_setdelay(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     cfg["delay"] = int(ctx.args[0])
     save_config(cfg)
     await update.message.reply_text(f"⏱️ Delay: {ctx.args[0]}s")
-
-async def cmd_setcookie(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not _is_admin(update.effective_user.id): return
-    cookie = " ".join(ctx.args).strip()
-    if not cookie:
-        await update.message.reply_text("Cú pháp: /setcookie <cookie>")
-        return
-    cfg = load_config()
-    cfg["cookie"] = cookie
-    save_config(cfg)
-    await update.message.reply_text("🍪 Đã cập nhật cookie.")
 
 async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_admin(update.effective_user.id): return
@@ -401,15 +404,15 @@ async def on_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     elif data == "set_target":
         WAITING["kind"] = "target"
-        await q.edit_message_text("🎯 Gửi UID hoặc link Facebook (hoặc gõ /start để hủy):", reply_markup=kb_main())
+        await q.edit_message_text("🎯 Gửi UID hoặc link Facebook:", reply_markup=kb_main())
 
     elif data == "set_delay":
         WAITING["kind"] = "delay"
-        await q.edit_message_text("⏱ Gửi số giây delay (hoặc gõ /start để hủy):", reply_markup=kb_main())
+        await q.edit_message_text("⏱ Gửi số giây delay:", reply_markup=kb_main())
 
     elif data == "input_cookie":
         WAITING["kind"] = "cookie"
-        await q.edit_message_text("🍪 Gửi chuỗi cookie (hoặc gõ /start để hủy):", reply_markup=kb_main())
+        await q.edit_message_text("🍪 Gửi chuỗi cookie:", reply_markup=kb_main())
 
     elif data == "set_reason":
         await q.edit_message_text("📝 Chọn lý do report:", reply_markup=kb_reason())
@@ -424,7 +427,7 @@ async def on_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text(format_status(cfg), reply_markup=kb_main(), parse_mode="HTML")
 
     elif data == "show_cookie":
-        cookie = cfg.get("cookie", "Chưa có")
+        cookie = cfg.get("cookie", os.getenv("FB_COOKIES", "Chưa có"))
         display_cookie = cookie[:150] + "..." if len(cookie) > 150 else cookie
         await q.edit_message_text(f"🍪 <b>Cookie hiện tại:</b>\n<code>{display_cookie}</code>", reply_markup=kb_main(), parse_mode="HTML")
 
@@ -443,6 +446,7 @@ async def on_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 # ================== KHỞI CHẠY BOT ==================
 async def _post_init(app_tg: Application):
+    await asyncio.to_thread(load_proxies)
     threading.Thread(target=loop_worker, args=(app_tg,), daemon=True).start()
     logger.info("=== ĐÃ BẬT LUỒNG REPORT NGẦM ===")
 
@@ -453,7 +457,7 @@ def _run_bot():
     try:
         logger.info("=== ĐANG KHỞI ĐỘNG BOT TELEGRAM ===")
         if not BOT_TOKEN:
-            logger.error("LỖI: BOT_TOKEN trống! Kiểm tra lại Environment trên Render.")
+            logger.error("LỖI: BOT_TOKEN trống!")
             return
 
         bot_app = Application.builder().token(BOT_TOKEN).post_init(_post_init).build()
@@ -462,14 +466,12 @@ def _run_bot():
         bot_app.add_handler(CommandHandler("settarget", cmd_settarget))
         bot_app.add_handler(CommandHandler("setreason", cmd_setreason))
         bot_app.add_handler(CommandHandler("setdelay", cmd_setdelay))
-        bot_app.add_handler(CommandHandler("setcookie", cmd_setcookie))
         bot_app.add_handler(CommandHandler("status", cmd_status))
         
         bot_app.add_handler(CallbackQueryHandler(on_button))
         bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
         
         logger.info("=== BOT ĐANG CHẠY (POLLING) ===")
-        # FIX LỖI CRASH: Thêm stop_signals=None
         bot_app.run_polling(drop_pending_updates=True, stop_signals=None)
         
     except Exception as e:
@@ -482,3 +484,4 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     logger.info(f"=== FLASK ĐANG LẮNG NGHE CỔNG {port} ===")
     app.run(host="0.0.0.0", port=port)
+      
